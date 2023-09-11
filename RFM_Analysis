@@ -1,0 +1,125 @@
+Create database RFM_Analysis;
+use RFM_Analysis;
+
+
+--Inspecting the data
+select * from dbo.sales_data_sample;
+
+--checking unique values
+select distinct status from sales_data_sample;--POWER BI
+select distinct year_id from sales_data_sample;
+select distinct PRODUCTLINE from sales_data_sample;--Power BI
+select distinct country from sales_data_sample;--Power BI
+select distinct dealsize from sales_data_sample;--Power BI
+
+--Analysis
+--Grouping sales by productline
+select* from sales_data_sample;
+
+select PRODUCTLINE, sum(Sales)as Revenue
+from sales_data_sample
+group by PRODUCTLINE
+order by Sum(Sales) desc;
+
+-- Sales by Year
+select YEAR_ID, sum(Sales)as Revenue
+from sales_data_sample
+group by YEAR_ID
+order by Sum(Sales) desc;
+	
+	-- why less in 2005
+	select distinct Month_id 
+	from sales_data_sample
+	where YEAR_ID=2005;
+
+-- Revenue by Dealsize
+select DealSize, sum(SALES) as Revenue
+from sales_data_sample
+group by DEALSIZE
+order by SUM(sales) desc;
+
+--best month in a specific year? how much was earned in the month?
+select Month_ID , sum(Sales) as Revenue, Count(ordernumber) as Frequency
+from sales_data_sample 
+where year_id =2003
+group by Month_ID
+order by sum(sales) desc;	
+
+select Month_ID , sum(Sales) as Revenue, Count(ordernumber) as Frequency
+from sales_data_sample 
+where year_id =2004
+group by Month_ID
+order by sum(sales) desc;	
+
+-- --Novemeber seems to be the best month , what do they sell in November
+	select Month_ID , PRODUCTLINE, sum(Sales) as Revenue, Count(ordernumber) as Frequency
+	from sales_data_sample 
+	where year_id =2003 and MONTH_ID= 11
+	group by Month_ID, PRODUCTLINE
+	order by sum(sales) desc;	
+
+	select Month_ID , PRODUCTLINE, sum(Sales) as Revenue, Count(ordernumber) as Frequency
+	from sales_data_sample 
+	where year_id =2003 and MONTH_ID= 11
+	group by Month_ID, PRODUCTLINE
+	order by sum(sales) desc;	
+
+	--What city has the highest number of sales in a specific country
+select city, sum (sales) Revenue
+from sales_data_sample
+where country = 'UK'
+group by city
+order by 2 desc
+
+---What is the best product in United States?
+select country, YEAR_ID, PRODUCTLINE, sum(sales) Revenue
+from sales_data_sample
+where country = 'USA'
+group by  country, YEAR_ID, PRODUCTLINE
+order by 4 desc
+
+--Who is the best customers?
+	
+	Select CustomerName, sum(Sales) as Monetary_Value, Avg(Sales) as Avg_Monetary_Value,
+	count(Ordernumber) as Frequency, max(OrderDate) as Last_Order_Date , 
+	(select max(orderdate) from sales_data_sample) as Max_Order_Date,
+	DATEDIFF(Day, max(OrderDate),(select max(orderdate) from sales_data_sample as Max_Order_Date)) as Recency
+	from sales_data_sample
+	group by CustomerName;
+
+
+	-- we will do bicketing using ntile with bucke
+	
+	drop table if exists #rfm
+	;with rfm as
+	(Select CustomerName, sum(Sales) as Monetary_Value, Avg(Sales) as Avg_Monetary_Value,
+	count(Ordernumber) as Frequency, max(OrderDate) as Last_Order_Date , 
+	(select max(orderdate) from sales_data_sample) as Max_Order_Date,
+	DATEDIFF(Day, max(OrderDate),(select max(orderdate) from sales_data_sample as Max_Order_Date)) as Recency
+	from sales_data_sample
+	group by CustomerName),
+
+	rfm_cal as 
+	(
+	select r.*,
+		ntile(4) over (order by Recency desc) as rfm_recency,
+		ntile(4) over (order by Frequency) as rfm_frequency,
+		ntile(4) over (order by Monetary_Value) as rfm_monetary	
+	from rfm as r)
+
+	select c.*, rfm_recency + rfm_frequency + rfm_monetary as rfm_cell ,
+	cast(rfm_recency as varchar) + cast(rfm_frequency as varchar) + cast(rfm_monetary as varchar) as rfm_cell_string
+	into #rfm
+	from rfm_cal as c	
+	
+	select CUSTOMERNAME , rfm_recency, rfm_frequency, rfm_monetary,
+	case 
+		when rfm_cell_string in (111, 112 , 121, 122, 123, 132, 211, 212, 114, 141) then 'lost_customers'  --lost customers
+		when rfm_cell_string in (133, 134, 143, 244, 334, 343, 344, 144) then 'slipping away, cannot lose' -- (Big spenders who haven’t purchased lately) slipping away
+		when rfm_cell_string in (311, 411, 331,421,412) then 'new customers'
+		when rfm_cell_string in (222, 223, 233, 322,221,232,234) then 'potential churners'
+		when rfm_cell_string in (323, 333,321, 422, 332, 432,423) then 'active' --(Customers who buy often & recently, but at low price points)
+		when rfm_cell_string in (433, 434, 443, 444) then 'loyal'
+	end as rfm_segment
+	from #rfm
+	
